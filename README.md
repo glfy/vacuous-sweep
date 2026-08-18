@@ -148,6 +148,3 @@ Python 3.9+, standard library only. No dependencies, no configuration.
 A snapshot for reading, not a fork. The canonical copies live in the harness they came from and are
 symlinked into three skills; edits belong there. A second editable copy would be the same
 divergence this tool exists to catch.
-
-<!-- Daria: paste your own write-up of the finding here, or link it. This README documents the
-     tool; that piece is the argument, and it should be in your words. Delete this comment. -->
