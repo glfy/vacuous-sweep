@@ -1,20 +1,53 @@
 # Vacuous-pass sweep
 
-Two tools that ask a question about automated checks that the checks cannot ask about themselves:
-**can this check report a pass without having done the work it claims to do?**
+An automated check can report success without ever having looked at anything. It happens when the
+check treats missing input as empty input: no files found, nothing wrong, exit zero, green.
 
-They were extracted from a claim-verification harness I build and operate for fact-checking
-popular-science video scripts. The harness has 51 release checks; a green run blocks or releases
-real editorial work. The tools here are the layer above those checks.
+This tool finds checks that do that. It does one thing — it runs each check on input there is
+nothing to say about, and looks at what the check says anyway.
 
-The code is unmodified from the working system, so its console output is Russian — the harness
-serves Russian deliverables. Every line it prints is glossed in English below.
+The tools come from a claim-verification harness I build and operate for fact-checking
+popular-science video scripts. It has 51 checks, and a green run releases real editorial work.
+The code here is unmodified, so it prints in Russian; every line is translated below.
 
----
+## How it works
 
-## Try it in ten seconds
+There are two probes, and they ask two different questions.
 
-`demo/` holds two deliberately tiny checks. One is honest. One has the defect.
+**Probe 1 — a path that does not exist.** The question is: did you reach your input at all?
+
+```
+$ python3 demo/check_honest.py  /nonexistent-abc/def
+/nonexistent-abc/def: no such directory — nothing was inspected
+exit 2
+
+$ python3 demo/check_vacuous.py /nonexistent-abc/def
+nothing to check
+exit 0
+```
+
+Zero means "all good". The second check reported all-good about a directory that isn't there.
+That is the whole detection, and the rule behind it is one line: a nonexistent path must produce a
+non-zero exit.
+
+**Probe 2 — a directory that exists but is empty.** The question is: when you say everything is
+fine, over how many things?
+
+```
+$ python3 demo/check_honest.py  <empty dir>
+inspected 0 report(s); 0 violations
+exit 0
+
+$ python3 demo/check_vacuous.py <empty dir>
+nothing to check
+exit 0
+```
+
+Both exit zero, and both are entitled to. Zero objects in a real folder is a legitimate pass.
+The difference is that one of them **says a number**. An invisible zero cannot be told apart from
+a claim about everything.
+
+## Try it
 
 ```bash
 python3 vacuous_sweep.py demo
@@ -24,105 +57,87 @@ python3 vacuous_sweep.py demo
   ✅ check_honest: не утверждает положительного о непроделанной работе
   ❌ check_vacuous: вышел НУЛЁМ на несуществующем пути (класс TK-0002/TK-0066)
        напечатал: nothing to check
-       чинить так: несуществующий путь — отказ с ненулевым кодом. Ноль объектов в
-       НАСТОЯЩЕМ выпуске остаётся законным зелёным: свип зондирует не его.
+       чинить так: несуществующий путь — отказ с ненулевым кодом.
 ✗ вакуумных гейтов: 1 — ноль проверок неотличим от нуля нарушений
 ```
 
-In English:
+> ✅ `check_honest` makes no positive claim about work it did not do.
+> ❌ `check_vacuous` exited zero on a nonexistent path. It printed `nothing to check`.
+> Fix: a nonexistent path must be a refusal with a non-zero exit code.
+> ✗ 1 vacuous check — zero inspections is indistinguishable from zero violations.
 
-> ✅ `check_honest`: makes no positive claim about work it did not do.
-> ❌ `check_vacuous`: **exited zero on a nonexistent path.** It printed `nothing to check`.
-> Fix: a nonexistent path must be a refusal with a non-zero exit code. Zero objects in a *real*
-> episode remains a legitimate pass — the sweep does not probe that case.
-> ✗ 1 vacuous check: zero inspections is indistinguishable from zero violations.
+Exit code `1`. The two demo checks differ by about six lines.
 
-Exit code is `1`. The two demo checks differ by about six lines; the difference is the entire point.
+## Four details that turned out to matter
 
----
+**A number, not a phrase.** Probe 2 asks for a digit rather than a reassuring sentence. A phrase can
+be satisfied by wording and depends on the language the check prints in. A count cannot.
 
-## What the probe requires
+**Subtract the probe's own path first.** Temporary directory names contain digits, so a check could
+satisfy probe 2 by echoing its own argument. Before this was fixed, the same run came back green 37
+times out of 40 — a meta-check that flickered.
 
-A check is put on trial and must satisfy two conditions.
+**Try every argument count, not the first one that answers.** Checks take different numbers of
+arguments, so the probe passes the path once, twice, three times. If a check rejects the arguments,
+that is not an answer: it never got as far as doing work. And it must refuse at *every* arity it
+accepts — one real check was honest with one argument and vacuous with two, because the second
+positional went down a branch that skipped the only path check.
 
-1. **Refuse a nonexistent path**, at *every* argument count it accepts. Walking all arities is not
-   thoroughness for its own sake: a real check took a cache directory as its second positional
-   argument, and that branch bypassed its only path check — so it was honest at one arity and
-   vacuous at another.
-2. **Name a number** when run against an existing but empty input. Zero objects in a real episode
-   is a legitimate outcome; an *invisible* zero is indistinguishable from a universal claim about
-   work that was never done. A count cannot be satisfied by wording and does not depend on the
-   language the check prints in.
+**A timeout is its own finding.** No answer within 60 seconds on a nonexistent path means the check
+is off scanning the disk. That is how a check that resolved a miss to `/` was found.
 
-An argument-parsing abort does not count as an answer. Under that cover three checks in the
-original system were not merely green but walking the disk for 25 seconds.
+## Why a sweep instead of fixing the checks
 
-The bar is deliberately low. It is a floor, not a ceiling.
-
-## Why a sweep and not a list of offenders
-
-Nine checks had already been fixed by name. The class came back in new code: three checks written
-afterwards printed conclusions about corpora they had never opened. A defect closed by a one-time
-action returns, so the carrier of the fix has to sit one class above the defect.
+Nine checks had already been fixed one at a time, by name. The class came back in new code: three
+checks written afterwards printed conclusions about corpora they had never opened. A defect closed
+by a one-time action returns. The fix has to sit one class above the defect.
 
 The first version of the probe found nothing, because its fake path sat inside a real temporary
-directory. Moving the probe to a nonexistent path at the filesystem root immediately exposed a
-check that resolved the miss to `/` and began scanning the entire disk. A degenerate-input test is
-only as good as how degenerate the input is.
+directory. Moving it to a nonexistent path at the filesystem root exposed the disk-walking check
+immediately. A degenerate-input test is only as good as how degenerate the input is.
 
 ## What it does not prove
 
-- It never judges whether a verdict is **correct**. It only establishes that the check reached its
-  input before claiming the input was clean.
-- A check can still hide a zero behind an unrelated number. That limit is recorded rather than
-  papered over.
-- Detecting whether a non-`check_*` script makes a pass/fail claim is a judgment call, so those are
-  enrolled by hand via `--also` — a name list, the very pattern this tool exists to replace.
+It never judges whether a verdict is **correct**. It establishes only that a check reached its input
+before calling that input clean. It is a floor, not a ceiling.
 
----
+A check can still hide a zero behind an unrelated number — that limit is recorded rather than
+papered over. And whether a script makes a pass/fail claim at all is a judgment call, so scripts not
+named `check_*` are enrolled by hand with `--also`: a name list, which is the very pattern this tool
+exists to replace.
 
-## `guard_proof.py`
-
-A second, smaller tool answering a different question: **do the tests guard *this particular* fix?**
-
-Three independent reviews in a row found the same thing in my own repairs — a regression fixture
-anchored to a different check, or a negative case that never touched the changed code. Each time it
-was caught by one move: revert the fix on a copy and see whether the suite goes red. That move
-belongs in a tool rather than in good intentions.
-
-```bash
-python3 guard_proof.py <skill> <file> [file ...] [--ref <git-ref>]
-```
-
-Exit `0` means the suite went red when the change was reverted — the fixtures do guard it. Exit `1`
-means it stayed green, so the receipt proves nothing.
-
-It does not prove the fix is correct, nor that the fixture is well written. It is a lower bound,
-without which the receipt is empty.
-
----
-
-## Self-test
-
-Both the predicate and the tool are tested two-sided — a rule must fire where it should and stay
-silent where it should not.
+## The self-test
 
 ```bash
 python3 vacuous_sweep.py --selftest
 ```
 
-Eleven cases, exit `0`. In English, they check that: a non-zero exit is never vacuous; a
-reassuring *phrase* no longer excuses a check; a universal claim is vacuous; a silent zero-exit is
-vacuous; an argument-parsing abort is not an answer, while a genuine refusal is; a refusal need not
-state its scope, but a pass must; a stated property is not a stated count; and silence is not a
-scope.
+The predicate is a pure function and is tested from both sides — it must fire where it should and
+stay silent where it should not. Eleven cases, exit `0`. Without this the sweep would be an
+uninsured guard, capable of the exact failure it looks for.
+
+## `guard_proof.py`
+
+A second, smaller tool for a different question: **do the tests guard *this particular* fix?**
+
+Three reviews in a row found the same thing in my own repairs — a regression fixture anchored to a
+different check, or a negative case that never touched the changed code. Each time it was caught by
+one move: revert the fix on a copy, and see whether the suite goes red.
+
+```bash
+python3 guard_proof.py <skill> <file> [file ...] [--ref <git-ref>]
+```
+
+Exit `0` — the suite went red, so the fixtures do guard the change. Exit `1` — it stayed green, so
+the receipt proves nothing. It does not prove the fix is correct, or that the fixture is well
+written. It is a lower bound, without which the receipt is empty.
 
 ## Files
 
 | File | Lines | Purpose |
 |---|---|---|
 | `vacuous_sweep.py` | 431 | Probes every check with degenerate input |
-| `guard_proof.py` | 190 | Reverts a fix and requires the suite to go red |
+| `guard_proof.py` | 190 | Reverts a change and requires the suite to go red |
 | `demo/check_honest.py` | 20 | Refuses a bad path, states a count |
 | `demo/check_vacuous.py` | 17 | The defect, minimally |
 
@@ -130,9 +145,9 @@ Python 3.9+, standard library only. No dependencies, no configuration.
 
 ## Provenance
 
-This is a **snapshot for reading**, not a fork. The canonical copies live in the harness they came
-from and are symlinked into three skills; edits belong there. Keeping a second editable copy is the
-same divergence class these tools exist to catch.
+A snapshot for reading, not a fork. The canonical copies live in the harness they came from and are
+symlinked into three skills; edits belong there. A second editable copy would be the same
+divergence this tool exists to catch.
 
-<!-- Daria: paste your own write-up of the finding here, or link it. This README is documentation;
-     that piece is the argument, and it should be in your words. -->
+<!-- Daria: paste your own write-up of the finding here, or link it. This README documents the
+     tool; that piece is the argument, and it should be in your words. Delete this comment. -->
